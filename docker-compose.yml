@@ -1,0 +1,119 @@
+services:
+  # Servicio de base de datos MariaDB
+  db:
+    image: mariadb:latest
+    container_name: mariadb
+    env_file:
+      - .env
+    restart: always
+    environment:
+      - MARIADB_ROOT_PASSWORD=${DB_ROOT_PASSWORD:-default_root_password}
+      - MARIADB_DATABASE=${DB_DATABASE:-default_db}
+      - MARIADB_USER=${DB_USER:-default_user}
+      - MARIADB_PASSWORD=${DB_PASSWORD:-default_password}
+    ports:
+      - "3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+    networks:
+      - backend
+
+  # Servicio de base de datos MongoDB
+  mongodb:
+    image: mongo:latest
+    container_name: mongodb
+    restart: always
+    env_file:
+      - .env
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=${MONGO_ROOT_USER:-default_user}  # Usuario root de MongoDB
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_ROOT_PASSWORD:-default_password}  # Contraseña root de MongoDB
+      - MONGO_INITDB_ROOT_DATABASE=${MONGO_DATABASE:-default_db}  # Base de datos inicial de MongoDB
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - backend
+
+  # Servicio de RabbitMQ
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    restart: always
+    env_file:
+      - .env
+    environment:
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER:-guest}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD:-guest}
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    networks:
+      - backend
+
+  # Servicio de Ticket Logger API
+  ticket-logger-api:
+    build:
+      context: ./dwese-ticket-logger-api
+    container_name: ticket-logger-api
+    env_file:
+      - .env
+    ports:
+      - "8083:8080"
+      - "5083:5005"
+    volumes:
+      - ./dwese-ticket-logger-api/uploads:/app/images/
+      - ./dwese-ticket-logger-api/keystore:/app/keystore/
+      - ./.env:/app/.env
+    depends_on:
+      - mongodb
+      - db
+    networks:
+      - backend
+
+  # API Gateway para enrutar peticiones
+  gateway:
+    build:
+      context: ./dwese-api-gateway  # Ruta del API Gateway
+    container_name: api-gateway
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"  # Mapea el puerto 8080 del contenedor al puerto 8080 en el host
+      - "5080:5005"  # Puerto para depuración remota
+    volumes:
+      - ./dwese-ticket-logger-api/keystore:/app/keystore/
+      - ./.env:/app/.env
+    depends_on:
+      - ticket-logger-api
+    networks:
+      - backend
+
+  # Servicio de autenticación (Auth Service)
+  auth-service:
+    build:
+      context: ./dwese-auth-service
+    container_name: auth-service
+    env_file:
+      - .env
+    ports:
+      - "8081:8080"
+      - "5081:5005"
+    volumes:
+      - ./dwese-ticket-logger-api/keystore:/app/keystore/  # Mapea el directorio keystore
+      - ./.env:/app/.env  # Monta el archivo .env en el contenedor
+    depends_on:
+      - db  # Depende de la base de datos MariaDB
+      - rabbitmq  # Depende de RabbitMQ
+    networks:
+      - backend  # Conecta Auth Service a la red 'backend'
+
+volumes:
+  db_data:
+  mongo_data:  # Volumen persistente para MongoDB
+
+networks:
+  backend:
+    driver: bridge
